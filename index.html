@@ -1,0 +1,646 @@
+<title>RAAAH 🫪🫪</title>
+<meta name="description" content="A glowing particle flower blooms inside a sphere of stars.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="RAAAH 🫪🫪">
+<meta property="og:description" content="A glowing particle flower blooms inside a sphere of stars.">
+<meta property="og:url" content="https://somebs.thatonebird.site/">
+<meta name="twitter:title" content="RAAAH 🫪🫪">
+<meta name="twitter:description" content="A glowing particle flower blooms inside a sphere of stars.">
+<style>
+  /* Layout: one full-bleed WebGL canvas, nothing else on the page. */
+  :root { --bg: #02030a; color-scheme: dark }
+  html, body { height: 100% }
+  body { margin: 0; background: var(--bg); overflow: hidden }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; background: var(--bg); touch-action: none }
+</style>
+<canvas id="c" role="img" aria-label="A glowing blue particle flower wilts, revives, blooms inside a sphere of stars, then closes and fades"></canvas>
+<script>
+(() => {
+  const cv = document.getElementById('c');
+  const gl = cv.getContext('webgl', { antialias: false, alpha: false });
+  if (!gl) return;
+
+  // ---------- seeded random so every load builds the same plant ----------
+  let seed = 20261105;
+  const R = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+  const TAU = Math.PI * 2;
+  const sm = x => { x = Math.min(1, Math.max(0, x)); return x * x * (3 - 2 * x); };
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  // ---------- particle store ----------
+  const colA = [], metaA = [], grpA = [];
+  let count = 0;
+  // group: 0 soil, 1 plant, 2 sphere
+  function add(g, r, gr, b, size, alpha, thr) {
+    colA.push(r, gr, b);
+    metaA.push(size, alpha, thr === undefined ? R() : thr, R());
+    grpA.push(g);
+    return count++;
+  }
+
+  // soil
+  const SOIL_N = 5200, soilBase = [];
+  const soilStart = count;
+  for (let i = 0; i < SOIL_N; i++) {
+    const x = R() * 2 - 1;
+    const y = Math.pow(R(), 3) * (0.05 + 0.07 * (1 - x * x)) - 0.004;
+    const z = (R() * 2 - 1) * 0.4 * (0.45 + 0.55 * (1 - x * x));
+    soilBase.push(x, y, z);
+    const k = 0.55 + 0.45 * R();
+    const near = Math.abs(x) < 0.22 ? 0.5 : 0;
+    add(0, lerp(0.82, 0.45, near) * k, lerp(0.84, 0.58, near) * k, lerp(0.92, 1.0, near) * k,
+        0.0045 + R() * 0.007, 0.18 + R() * 0.5);
+  }
+
+  // stem
+  const STEM_N = 1500, stemStart = count;
+  const stT = new Float32Array(STEM_N), stB = new Float32Array(STEM_N), stR = new Float32Array(STEM_N);
+  for (let i = 0; i < STEM_N; i++) {
+    stT[i] = R(); stB[i] = R() * TAU; stR[i] = 0.009 + 0.006 * (1 - stT[i]);
+    const k = 0.7 + 0.3 * R();
+    add(1, 0.2 * k, 0.4 * k, 1.0 * k, 0.006, 0.6);
+  }
+
+  // petals
+  const layers = [
+    { n: 6, L: 0.44, W: 0.34, off: 0.0,        phiC: 0.10, phiO: 0.98, cC: 0.10, cO: 0.75 },
+    { n: 6, L: 0.40, W: 0.34, off: Math.PI / 6, phiC: 0.13, phiO: 0.76, cC: 0.10, cO: 0.65 },
+    { n: 5, L: 0.33, W: 0.36, off: 0.3,        phiC: 0.16, phiO: 0.52, cC: 0.10, cO: 0.55 },
+    { n: 4, L: 0.24, W: 0.38, off: 0.8,        phiC: 0.18, phiO: 0.28, cC: 0.10, cO: 0.40 },
+  ];
+  const PET_N = 520;
+  const petals = [];
+  const petStart = count;
+  let pu, pv, pwu;
+  {
+    const total = layers.reduce((a, l) => a + l.n, 0) * PET_N;
+    pu = new Float32Array(total); pv = new Float32Array(total); pwu = new Float32Array(total);
+    let idx = 0;
+    layers.forEach((l, li) => {
+      for (let p = 0; p < l.n; p++) {
+        const th = l.off + (p / l.n) * TAU + (R() - 0.5) * 0.18;
+        petals.push({ li, th, L: l.L * (0.94 + 0.12 * R()), W: l.W, phiC: l.phiC, phiO: l.phiO * (0.94 + 0.12 * R()), cC: l.cC, cO: l.cO, start: idx });
+        for (let i = 0; i < PET_N; i++, idx++) {
+          const u = Math.pow(R(), 0.85);
+          const kind = R();
+          let v;
+          if (kind < 0.46) v = (R() * 2 - 1) * 0.95;
+          else if (kind < 0.72) v = R() < 0.5 ? -1 : 1;
+          else { const vs = [-0.7, -0.4, 0, 0, 0.4, 0.7]; v = vs[(R() * vs.length) | 0]; }
+          pu[idx] = u; pv[idx] = v;
+          pwu[idx] = Math.pow(Math.sin(Math.PI * Math.pow(u, 0.7)), 0.9);
+          const edge = Math.abs(v) > 0.99, vein = kind >= 0.72;
+          const k = (edge ? 1.0 : vein ? 0.85 : 0.55) * (0.75 + 0.25 * R());
+          const lay = li / 3;
+          // blue outside, violet inside, warm glow at inner petal bases
+          let r = lerp(0.24, 0.62, lay), g = lerp(0.34, 0.42, lay), b = 1.0;
+          const warm = Math.pow(1 - u, 3) * 0.55 * lay;
+          r = lerp(r, 0.98, warm); g = lerp(g, 0.55, warm); b = lerp(b, 0.8, warm);
+          const tip = Math.max(0, u - 0.8) * 4 * (1 - lay);
+          r = lerp(r, 0.55, tip); g = lerp(g, 0.72, tip);
+          add(1, r * k, g * k, b * k, edge ? 0.0085 : vein ? 0.0065 : 0.0055, edge ? 0.7 : vein ? 0.6 : 0.3);
+        }
+      }
+    });
+  }
+
+  // pistil glow at the heart of the flower
+  const PIS_N = 320, pisStart = count;
+  const psH = new Float32Array(PIS_N), psR = new Float32Array(PIS_N), psA = new Float32Array(PIS_N);
+  for (let i = 0; i < PIS_N; i++) {
+    psH[i] = Math.pow(R(), 0.8) * 0.14; psR[i] = R() * 0.03 * (1 - psH[i] / 0.2); psA[i] = R() * TAU;
+    add(1, 1.0, 0.55 + 0.15 * R(), 0.5 + 0.3 * R(), 0.0055, 0.45);
+  }
+
+  // leaves
+  const leafDefs = [
+    { t0: 0.05, a: 0.35, L: 0.30 }, { t0: 0.08, a: 2.80, L: 0.30 },
+    { t0: 0.17, a: -0.50, L: 0.24 }, { t0: 0.22, a: 3.60, L: 0.24 },
+  ];
+  const LEAF_N = 1100, leafStart = count;
+  const lu = new Float32Array(LEAF_N * 4), lv = new Float32Array(LEAF_N * 4), lwu = new Float32Array(LEAF_N * 4);
+  for (let q = 0; q < 4; q++) {
+    for (let i = 0; i < LEAF_N; i++) {
+      const j = q * LEAF_N + i, kind = R();
+      let u, v;
+      if (kind < 0.45) { u = Math.pow(R(), 0.9); v = (R() * 2 - 1) * 0.95; }
+      else if (kind < 0.67) { u = Math.pow(R(), 0.9); v = R() < 0.5 ? -1 : 1; }
+      else if (kind < 0.77) { u = R(); v = 0; }
+      else {
+        const vi = (R() * 6) | 0, t = R(), sg = R() < 0.5 ? -1 : 1;
+        u = Math.min(0.98, 0.12 + 0.13 * vi + t * 0.3); v = sg * t * 0.9;
+      }
+      lu[j] = u; lv[j] = v; lwu[j] = Math.pow(Math.sin(Math.PI * Math.pow(u, 0.65)), 0.9);
+      const edge = Math.abs(v) > 0.99, k = (edge ? 1.0 : kind < 0.67 ? 0.55 : 0.85) * (0.75 + 0.25 * R());
+      add(1, 0.18 * k, 0.55 * k, 1.0 * k, edge ? 0.0085 : 0.006, edge ? 0.7 : kind < 0.67 ? 0.35 : 0.6);
+    }
+  }
+
+  // soft glow behind the flower
+  const haloIdx = add(1, 0.28, 0.36, 1.0, 1.0, 0.045, 0);
+
+  // constellation sphere
+  const ringN = [[0, 1, 0], [1, 0, 0], [0.7, 0.7, 0], [0.7, -0.7, 0.3], [0, 0.5, 0.86]];
+  const RING_P = 280, sphStart = count;
+  const ringBasis = ringN.map(n => {
+    const l = Math.hypot(...n); n = n.map(x => x / l);
+    let a = Math.abs(n[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
+    let e1 = [n[1] * a[2] - n[2] * a[1], n[2] * a[0] - n[0] * a[2], n[0] * a[1] - n[1] * a[0]];
+    const el = Math.hypot(...e1); e1 = e1.map(x => x / el);
+    const e2 = [n[1] * e1[2] - n[2] * e1[1], n[2] * e1[0] - n[0] * e1[2], n[0] * e1[1] - n[1] * e1[0]];
+    return { e1, e2 };
+  });
+  const sphG = new Float32Array(RING_P * 5), sphD = new Float32Array(1000 * 3);
+  for (let r = 0; r < 5; r++) for (let i = 0; i < RING_P; i++) {
+    sphG[r * RING_P + i] = (i / RING_P) * TAU + (R() - 0.5) * 0.02;
+    add(2, 0.5, 0.6, 1.0, 0.0058, 0.85);
+  }
+  for (let i = 0; i < 1000; i++) {
+    let x = R() * 2 - 1, y = R() * 2 - 1, z = R() * 2 - 1; const l = Math.hypot(x, y, z) || 1;
+    sphD[i * 3] = x / l; sphD[i * 3 + 1] = y / l; sphD[i * 3 + 2] = z / l;
+    const star = R() < 0.05, w = R();
+    add(2, lerp(0.55, 0.9, w), lerp(0.65, 0.92, w), 1.0, star ? 0.015 : 0.004 + R() * 0.006, star ? 0.95 : 0.3 + R() * 0.55);
+  }
+
+  // ---------- stage 2: lily bouquet (groups 3 = bouquet, 4 = stars) ----------
+  const PAL = {
+    red:     [[0.96, 0.08, 0.08], [1.0, 0.50, 0.08]],
+    pink:    [[0.97, 0.28, 0.80], [1.0, 0.80, 0.85]],
+    yellow:  [[1.0, 0.80, 0.06], [0.88, 0.92, 0.30]],
+    cream:   [[1.0, 0.93, 0.78], [0.92, 0.86, 0.40]],
+    peach:   [[1.0, 0.52, 0.22], [1.0, 0.82, 0.30]],
+    crimson: [[0.78, 0.06, 0.12], [0.95, 0.35, 0.10]],
+    plum:    [[0.88, 0.22, 0.52], [1.0, 0.62, 0.62]],
+  };
+  const FLW = [
+    { x: -0.32, y: 1.22, z: 0.00, R: 0.233, c: 'cream' },
+    { x: 0.04,  y: 1.36, z: -0.06, R: 0.175, c: 'peach' },
+    { x: 0.34,  y: 1.22, z: 0.02, R: 0.209, c: 'yellow' },
+    { x: 0.02,  y: 1.04, z: 0.20, R: 0.314, c: 'red' },
+    { x: 0.40,  y: 0.94, z: 0.10, R: 0.233, c: 'plum' },
+    { x: -0.46, y: 0.90, z: 0.05, R: 0.209, c: 'yellow' },
+    { x: -0.19, y: 0.70, z: 0.34, R: 0.290, c: 'pink' },
+    { x: 0.19,  y: 0.66, z: 0.40, R: 0.290, c: 'cream' },
+    { x: -0.48, y: 0.46, z: 0.20, R: 0.209, c: 'yellow' },
+    { x: -0.02, y: 0.42, z: 0.50, R: 0.279, c: 'peach' },
+    { x: 0.46,  y: 0.40, z: 0.22, R: 0.209, c: 'crimson' },
+    { x: -0.13, y: 1.52, z: -0.08, R: 0.116, c: 'crimson', bud: 1 },
+    { x: 0.24,  y: 1.48, z: 0.00, R: 0.104, c: 'red', bud: 1 },
+    { x: -0.50, y: 1.12, z: -0.05, R: 0.104, c: 'peach', bud: 1 },
+  ];
+  // heart formation: while the screen is held, the flowers drift into a heart
+  FLW.forEach((f, i) => {
+    const t = (i / FLW.length) * TAU;
+    const yf = (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 16;
+    f.hx = 0.7 * Math.pow(Math.sin(t), 3);
+    f.hy = 0.85 + 0.7 * (yf + 0.375);
+    f.hz = 0.12 + 0.12 * Math.sin(3 * t);
+    f.hd = ((i * 0.37) % 1) * 0.3;
+  });
+  const TN_BLOOM = 680, TN_BUD = 200, STEM_PER = 230, STAM_N = 26, LEAF_PER = 300;
+  let totalTep = 0;
+  FLW.forEach(f => { f.tn = f.bud ? TN_BUD : TN_BLOOM; totalTep += 6 * f.tn; });
+  const tU = new Float32Array(totalTep), tV = new Float32Array(totalTep), tW = new Float32Array(totalTep);
+  let ti = 0;
+  FLW.forEach(f => {
+    f.tStart = ti; f.pStart = count;
+    const nx = f.x * 0.7, ny = f.bud ? 1.2 : 0.35, nz = f.z * 0.7 + 1.1, nl = Math.hypot(nx, ny, nz);
+    f.nf = [nx / nl, ny / nl, nz / nl];
+    f.dG = R() * 1.2; f.dB = 3.0 + R() * 1.6; f.bmax = f.bud ? 0.14 : 1;
+    f.rotOff = R() * TAU; f.ph = R() * TAU;
+    f.bx = (R() - 0.5) * 0.16; f.bz = (R() - 0.5) * 0.16;
+    f.p1x = (f.bx + f.x) * 0.35 + (R() - 0.5) * 0.1; f.p1y = f.y * 0.5; f.p1z = (f.bz + f.z) * 0.35;
+    const C = PAL[f.c][0], T = PAL[f.c][1];
+    for (let k = 0; k < 6; k++) for (let i = 0; i < f.tn; i++, ti++) {
+      const u = Math.pow(R(), 0.85), kind = R();
+      let v;
+      if (kind < 0.72) v = (R() * 2 - 1) * 0.97;
+      else if (kind < 0.86) v = R() < 0.5 ? -1 : 1;
+      else { const vs = [-0.5, 0, 0, 0.5]; v = vs[(R() * 4) | 0]; }
+      tU[ti] = u; tV[ti] = v; tW[ti] = Math.pow(Math.sin(Math.PI * Math.pow(u, 0.75)), 0.85);
+      const edge = Math.abs(v) > 0.99, vein = kind >= 0.86, th = sm(u * 1.7);
+      let r = lerp(T[0], C[0], th), g = lerp(T[1], C[1], th), b = lerp(T[2], C[2], th);
+      if (u < 0.6 && kind < 0.72 && R() < 0.08) { r = C[0] * 0.35; g = C[1] * 0.3; b = C[2] * 0.4; }
+      if (Math.abs(v) < 0.05 && u < 0.45) { r = lerp(r, 0.7, 0.5); g = lerp(g, 0.9, 0.5); b = lerp(b, 0.4, 0.5); }
+      const k2 = (edge ? 1.0 : vein ? 1.0 : 0.95) * (0.9 + 0.1 * R());
+      add(3, Math.min(1, r * k2), Math.min(1, g * k2), Math.min(1, b * k2), edge ? 0.0095 : 0.0105, edge ? 0.95 : 0.9);
+    }
+  });
+  // stamens and pistil
+  const sU = new Float32Array(STAM_N);
+  for (let i = 0; i < STAM_N; i++) sU[i] = (i + 0.5) / STAM_N;
+  FLW.forEach(f => {
+    f.sStart = count;
+    for (let k = 0; k < 7; k++) for (let i = 0; i < STAM_N; i++) {
+      const an = sU[i] > 0.88;
+      add(3, an ? 0.8 + 0.15 * R() : 0.85, an ? 0.3 + 0.15 * R() : 0.95, an ? 0.08 : 0.55, an ? 0.011 : 0.0045, an ? 0.95 : 0.6);
+    }
+  });
+  // stems
+  FLW.forEach(f => {
+    f.stStart = count; f.stT = new Float32Array(STEM_PER); f.stJ = new Float32Array(STEM_PER * 3);
+    for (let i = 0; i < STEM_PER; i++) {
+      f.stT[i] = R();
+      f.stJ[i * 3] = (R() - 0.5) * 0.009; f.stJ[i * 3 + 1] = (R() - 0.5) * 0.004; f.stJ[i * 3 + 2] = (R() - 0.5) * 0.009;
+      const k = 0.7 + 0.3 * R();
+      add(3, 0.2 * k, 0.85 * k, 0.28 * k, 0.0065, 0.7);
+    }
+  });
+  // leaves
+  const LV = [];
+  const bLu = new Float32Array(16 * LEAF_PER), bLv = new Float32Array(16 * LEAF_PER), bLw = new Float32Array(16 * LEAF_PER);
+  for (let q = 0; q < 16; q++) {
+    LV.push({ si: (R() * 11) | 0, t0: 0.1 + R() * 0.3, a: R() * TAU, eps: 0.5 + R() * 0.7, L: 0.30 + R() * 0.16, d: R() * 1.6, start: count });
+    for (let i = 0; i < LEAF_PER; i++) {
+      const j = q * LEAF_PER + i, kind = R(); let u, v;
+      if (kind < 0.45) { u = Math.pow(R(), 0.9); v = (R() * 2 - 1) * 0.95; }
+      else if (kind < 0.7) { u = Math.pow(R(), 0.9); v = R() < 0.5 ? -1 : 1; }
+      else if (kind < 0.85) { u = R(); v = 0; }
+      else { const t = R(), sg = R() < 0.5 ? -1 : 1; u = Math.min(0.98, 0.1 + R() * 0.8); v = sg * t * 0.6; }
+      bLu[j] = u; bLv[j] = v; bLw[j] = Math.pow(Math.sin(Math.PI * Math.pow(u, 0.8)), 0.9);
+      const edge = Math.abs(v) > 0.99, k = (edge ? 1 : 0.75) * (0.75 + 0.25 * R());
+      add(3, (0.12 + 0.15 * R()) * k, (0.7 + 0.25 * R()) * k, (0.16 + 0.1 * R()) * k, edge ? 0.0085 : 0.0065, edge ? 0.85 : 0.55);
+    }
+  }
+  const halo2 = add(3, 1.0, 0.62, 0.45, 2.0, 0.03, 0);
+
+  // star specks in the dark (group 4)
+  const STAR_N = 320, starStart = count, starBase = [];
+  for (let i = 0; i < STAR_N; i++) {
+    starBase.push(R() * 2 - 1, 0.15 + R() * 3.0, -1 + R() * 1.4);
+    add(4, 0.8, 0.85, 1.0, 0.003 + R() * 0.004, 0.3 + R() * 0.5);
+  }
+
+  const N = count;
+  const pos = new Float32Array(N * 3);
+
+  // ---------- WebGL ----------
+  const vs = `
+    attribute vec3 aPos; attribute vec3 aCol; attribute vec4 aMeta; attribute float aGroup;
+    uniform mat4 uMVP; uniform float uScale, uTime, uDpr, uLife, uGS; uniform vec4 uGA;
+    varying vec4 vC;
+    void main(){
+      vec4 p = uMVP * vec4(aPos, 1.0);
+      gl_Position = p;
+      float ga = aGroup < 0.5 ? uGA.x : (aGroup < 1.5 ? uGA.y : (aGroup < 2.5 ? uGA.z : (aGroup < 3.5 ? uGA.w : uGS)));
+      float dis = clamp((ga - aMeta.z * 0.85) * 6.0, 0.0, 1.0);
+      float tw = 0.78 + 0.22 * sin(uTime * (1.2 + aMeta.w * 2.5) + aMeta.w * 60.0);
+      vec3 col = aCol;
+      if (aGroup > 0.5 && aGroup < 2.5) {
+        float l = dot(col, vec3(0.3, 0.5, 0.2));
+        vec3 gr = vec3(0.12 + l * 0.38) * vec3(0.9, 0.88, 1.0);
+        col = mix(gr, col, uLife);
+      }
+      gl_PointSize = max(aMeta.x * uScale / max(p.w, 0.1), 1.5 * uDpr);
+      vC = vec4(col, aMeta.y * dis * tw);
+    }`;
+  const fs = `
+    precision mediump float; varying vec4 vC;
+    void main(){
+      float d = length(gl_PointCoord - 0.5) * 2.0;
+      float a = smoothstep(1.0, 0.12, d);
+      gl_FragColor = vec4(vC.rgb, vC.a * a);
+    }`;
+  const sh = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); return o; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog); gl.useProgram(prog);
+  const buf = (data, name, size, usage) => {
+    const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, usage);
+    const loc = gl.getAttribLocation(prog, name); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+    return b;
+  };
+  const posBuf = buf(pos, 'aPos', 3, gl.DYNAMIC_DRAW);
+  buf(new Float32Array(colA), 'aCol', 3, gl.STATIC_DRAW);
+  buf(new Float32Array(metaA), 'aMeta', 4, gl.STATIC_DRAW);
+  buf(new Float32Array(grpA), 'aGroup', 1, gl.STATIC_DRAW);
+  const U = n => gl.getUniformLocation(prog, n);
+  const uMVP = U('uMVP'), uScale = U('uScale'), uTime = U('uTime'), uDpr = U('uDpr'), uLife = U('uLife'), uGA = U('uGA'), uGS = U('uGS');
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.disable(gl.DEPTH_TEST);
+  gl.clearColor(0.008, 0.012, 0.04, 1);
+
+  // ---------- camera ----------
+  const FOV = 34 * Math.PI / 180, TF = Math.tan(FOV / 2);
+  let cam = null, mvp = new Float32Array(16), soilW = 1.2, W = 1, H = 1, dpr = 1;
+  function mul(a, b) {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) {
+      let s = 0; for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k]; o[c * 4 + r] = s;
+    }
+    return o;
+  }
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = Math.max(1, Math.round(cv.clientWidth * dpr)); H = Math.max(1, Math.round(cv.clientHeight * dpr));
+    cv.width = W; cv.height = H; gl.viewport(0, 0, W, H);
+    const asp = W / H;
+    const dist = Math.max(0.92 / TF, 1.0 / (TF * asp));
+    const ty = 0.80, ey = ty + dist * 0.26;
+    let fx = 0, fy = ty - ey, fz = -dist; const fl = Math.hypot(fy, fz); fy /= fl; fz /= fl;
+    const ux = 0, uy = -fz, uz = fy;
+    cam = { ey, dist, fy, fz, uy, uz, asp };
+    const V = new Float32Array([1, 0, 0, 0, 0, uy, -fy, 0, 0, uz, -fz, 0, 0, -(uy * ey + uz * dist), (fy * ey + fz * dist), 1]);
+    const f = 1 / TF, n = 0.1, fa = 40;
+    const P = new Float32Array([f / asp, 0, 0, 0, 0, f, 0, 0, 0, 0, (fa + n) / (n - fa), -1, 0, 0, 2 * fa * n / (n - fa), 0]);
+    mvp = mul(P, V);
+    soilW = Math.min(3.4, dist * TF * asp * 1.08);
+    for (let i = 0; i < SOIL_N; i++) {
+      const o = (soilStart + i) * 3;
+      pos[o] = soilBase[i * 3] * soilW; pos[o + 1] = soilBase[i * 3 + 1]; pos[o + 2] = soilBase[i * 3 + 2];
+    }
+    for (let i = 0; i < STAR_N; i++) {
+      const o = (starStart + i) * 3;
+      pos[o] = starBase[i * 3] * soilW; pos[o + 1] = starBase[i * 3 + 1]; pos[o + 2] = starBase[i * 3 + 2];
+    }
+  }
+  window.addEventListener('resize', resize); resize();
+
+  // ---------- the story: wilted -> revive -> bloom -> close -> fade -> repeat ----------
+  const PERIOD = 28;
+  function story(T, time) {
+    let s = 0.8, A = 0, droop = 1, life = 0.12, b = 0.12, sphereA = 0, soilA = 1, A2 = 0, G = 1, tau = -1;
+    if (T < 11) {
+      // stage 1: wilted -> revive -> bloom -> close -> sink into the soil
+      const r = sm((T - 1) / 2.4), bl = sm((T - 1.5) / 2.2), c = sm((T - 5.2) / 3.8), f = sm((T - 9) / 2);
+      droop = 1 - r; life = 0.12 + 0.88 * r;
+      b = (0.12 + 0.88 * bl) * (1 - 0.95 * c);
+      s = (0.8 + 0.2 * r) * (1 - 0.55 * c) * (1 - 0.7 * f);
+      A = 1 - f; soilA = 1 - 0.65 * f;
+      sphereA = r * (0.3 + 0.7 * b) * A;
+    } else {
+      // stage 2: the lily bouquet grows out of the soil and stays
+      tau = T - 11; A2 = 1;
+      soilA = 0.35 + 0.55 * sm(tau / 2);
+    }
+    const breath = 1 + 0.012 * Math.sin(time * 1.6);
+    return { s: s * breath, A, droop, life, b: Math.min(1, b + 0.015 * Math.sin(time * 1.3) * (b > 0.5 ? 1 : 0)), sphereA, soilA, A2, G, tau };
+  }
+
+  const M = 40, SX = new Float32Array(M + 1), SY = new Float32Array(M + 1), SA = new Float32Array(M + 1);
+  let sx_ = 0, sy_ = 0, sa_ = 0;
+  function sampleStem(t) {
+    const f = t * M, i = Math.min(M - 1, f | 0), fr = f - i;
+    sx_ = lerp(SX[i], SX[i + 1], fr); sy_ = lerp(SY[i], SY[i + 1], fr); sa_ = lerp(SA[i], SA[i + 1], fr);
+  }
+
+  function update1(st, time) {
+    const s = st.s, b = st.b, droop = st.droop;
+    const rot = 0.4 * Math.sin(time * 0.28), cR = Math.cos(rot), sR = Math.sin(rot);
+    const put = (i, x, y, z) => { const o = i * 3; pos[o] = x * cR + z * sR; pos[o + 1] = y; pos[o + 2] = -x * sR + z * cR; };
+
+    // stem centreline
+    const Hs = 0.8 * s, dl = Hs / M; let x = 0, y = 0;
+    for (let i = 0; i <= M; i++) {
+      const t = i / M;
+      const a = droop * 2.15 * Math.pow(t, 1.7) + 0.11 * Math.sin(t * 3 + 0.6) * (1 - 0.6 * droop) + 0.025 * Math.sin(time * 1.3 + t * 4) * t;
+      SA[i] = a; SX[i] = x; SY[i] = y; x += Math.sin(a) * dl; y += Math.cos(a) * dl;
+    }
+    for (let i = 0; i < STEM_N; i++) {
+      sampleStem(stT[i]);
+      const c1 = Math.cos(sa_), s1 = Math.sin(sa_), bb = stB[i], rr = stR[i] * Math.max(0.5, s);
+      put(stemStart + i, sx_ + rr * Math.cos(bb) * c1, sy_ - rr * Math.cos(bb) * s1, rr * Math.sin(bb));
+    }
+
+    const hx = SX[M], hy = SY[M], ha = SA[M], sa = Math.sin(ha), ca = Math.cos(ha);
+    const Ux = sa, Uy = ca;
+
+    // petals
+    for (const p of petals) {
+      const phi0 = lerp(p.phiC, p.phiO, b), c = lerp(p.cC, p.cO, b), L = p.L * s;
+      const sinP0 = Math.sin(phi0), cosP0 = Math.cos(phi0);
+      const ct = Math.cos(p.th), stt = Math.sin(p.th);
+      const rx = ct * ca, ry = -ct * sa, rz = stt;
+      const tx = -stt * ca, ty = stt * sa, tz = ct;
+      const wsc = p.W * (0.55 + 0.45 * b), rho = 0.022 * s;
+      for (let i = 0; i < PET_N; i++) {
+        const j = p.start + i, u = pu[j], v = pv[j], wu = pwu[j];
+        const ang = phi0 + c * u;
+        const f = (Math.sin(ang) - sinP0) / c, g = (cosP0 - Math.cos(ang)) / c;
+        const lat = v * wu * wsc, cup = v * v * wu * wsc * 0.5;
+        const up = f + cup * 0.25, rad = g - cup * 0.6 + rho / L;
+        put(petStart + j,
+          hx + L * (up * Ux + rad * rx + lat * tx),
+          hy + L * (up * Uy + rad * ry + lat * ty),
+          L * (rad * rz + lat * tz));
+      }
+    }
+
+    // pistil
+    const pk = (0.3 + 0.7 * b) * s;
+    for (let i = 0; i < PIS_N; i++) {
+      const h = psH[i] * pk, rr = psR[i] * s, an = psA[i], ca2 = Math.cos(an), sa2 = Math.sin(an);
+      put(pisStart + i, hx + h * Ux + rr * ca2 * ca, hy + h * Uy - rr * ca2 * sa, rr * sa2);
+    }
+
+    // leaves
+    const vig = 1 - droop;
+    for (let q = 0; q < 4; q++) {
+      const d = leafDefs[q]; sampleStem(d.t0);
+      const bx = sx_, by = sy_, hxL = Math.cos(d.a), hzL = Math.sin(d.a), lx = -hzL, lz = hxL;
+      const eps = lerp(-1.0, 0.45, vig), c = -0.9, L = d.L * s * (0.85 + 0.15 * vig);
+      const sinE = Math.sin(eps), cosE = Math.cos(eps), fold = 0.3 * vig;
+      for (let i = 0; i < LEAF_N; i++) {
+        const j = q * LEAF_N + i, u = lu[j], v = lv[j], wu = lwu[j];
+        const ang = eps + c * u;
+        const fx = (Math.sin(ang) - sinE) / c, gy = (cosE - Math.cos(ang)) / c;
+        const lat = v * wu * 0.34 * L, fl = Math.abs(v) * wu * 0.34 * L * fold;
+        put(leafStart + j,
+          bx + L * fx * hxL + lat * lx,
+          Math.max(0.012, by + L * gy + fl),
+          L * fx * hzL + lat * lz);
+      }
+    }
+
+    // halo
+    put(haloIdx, hx + Ux * 0.12 * s, hy + Uy * 0.12 * s, 0);
+
+    // sphere
+    const Rs = 0.58 * s * (0.7 + 0.3 * b), cx = hx + Ux * 0.16 * s, cy = hy + Uy * 0.16 * s;
+    const sp = time * 0.2, cs = Math.cos(sp), ss = Math.sin(sp);
+    for (let r = 0; r < 5; r++) {
+      const { e1, e2 } = ringBasis[r];
+      for (let i = 0; i < RING_P; i++) {
+        const g = sphG[r * RING_P + i], c1 = Math.cos(g) * Rs, s1 = Math.sin(g) * Rs;
+        const lx = c1 * e1[0] + s1 * e2[0], ly = c1 * e1[1] + s1 * e2[1], lz = c1 * e1[2] + s1 * e2[2];
+        put(sphStart + r * RING_P + i, cx + lx * cs + lz * ss, cy + ly, -lx * ss + lz * cs);
+      }
+    }
+    const dotStart = sphStart + 5 * RING_P;
+    for (let i = 0; i < 1000; i++) {
+      const rr = Rs * (1 + 0.012 * Math.sin(time * 1.4 + i)), lx = sphD[i * 3] * rr, ly = sphD[i * 3 + 1] * rr, lz = sphD[i * 3 + 2] * rr;
+      put(dotStart + i, cx + lx * cs + lz * ss, cy + ly, -lx * ss + lz * cs);
+    }
+  }
+
+
+  // ---------- touch: the bouquet parts around a finger or cursor, leans away, and ripples on tap ----------
+  const PR = 0.28, PUSH = 0.15, PLANE_Z = 0.25;
+  let px = 0, py = 0, tx = 0, ty = 0, infl = 0, target = 0, down = false, nowT = 0, heartB = 0;
+  const rip = [];
+  function toWorld(ev) {
+    const r = cv.getBoundingClientRect();
+    const nx = ((ev.clientX - r.left) / r.width) * 2 - 1, ny = 1 - ((ev.clientY - r.top) / r.height) * 2;
+    const dx = nx * TF * cam.asp, dy = cam.fy + ny * TF * cam.uy, dz = cam.fz + ny * TF * cam.uz;
+    const t = (PLANE_Z - cam.dist) / dz;
+    return [t * dx, cam.ey + t * dy];
+  }
+  function setTarget(ev, on) {
+    if (!cam) return;
+    const w = toWorld(ev); tx = w[0]; ty = w[1];
+    if (on && target === 0) { px = tx; py = ty; }
+    target = on ? 1 : 0;
+  }
+  cv.addEventListener('pointermove', ev => { if (ev.pointerType === 'mouse' || down) setTarget(ev, true); });
+  cv.addEventListener('pointerdown', ev => {
+    down = true; try { cv.setPointerCapture(ev.pointerId); } catch (e) {}
+    setTarget(ev, true); px = tx; py = ty;
+    rip.push({ x: tx, y: ty, t: nowT }); if (rip.length > 5) rip.shift();
+  });
+  const up = ev => { down = false; if (ev.pointerType !== 'mouse') target = 0; };
+  cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  cv.addEventListener('pointerleave', ev => { if (!down) target = 0; });
+  function pushPoint(o) {
+    const x = pos[o], y = pos[o + 1], z = pos[o + 2];
+    let ox = 0, oy = 0, oz = 0;
+    const inf = infl * (1 - heartB);
+    if (inf > 0.01) {
+      const dx = x - px, dy = y - py, d2 = dx * dx + dy * dy;
+      if (d2 < PR * PR) {
+        const d = Math.sqrt(d2) + 1e-5, q = 1 - d / PR, f = q * q * PUSH * inf;
+        ox += dx / d * f; oy += dy / d * f; oz += q * q * 0.12 * inf;
+      }
+    }
+    for (let i = 0; i < rip.length; i++) {
+      const r = rip[i], age = nowT - r.t, dx = x - r.x, dy = y - r.y, d = Math.sqrt(dx * dx + dy * dy) + 1e-5;
+      const e = (d - age * 1.5) / 0.14, f = 0.11 * Math.exp(-age * 1.6) * Math.exp(-e * e);
+      ox += dx / d * f; oy += dy / d * f; oz += f * 0.6;
+    }
+    pos[o] = x + ox; pos[o + 1] = y + oy; pos[o + 2] = z + oz;
+  }
+
+  // ---------- stage 2 update ----------
+  const R0 = (() => { const l = Math.hypot(0.6, 0.35, -0.7); return [0.6 / l, 0.35 / l, -0.7 / l]; })();
+  let bx_ = 0, by_ = 0, bz_ = 0;
+  function Bz(f, t) {
+    const a = 1 - t, w0 = a * a, w1 = 2 * a * t, w2 = t * t;
+    bx_ = w1 * f.cp1x + w0 * f.bx + w2 * f.cx; by_ = w1 * f.cp1y + w2 * f.cy; bz_ = w1 * f.cp1z + w0 * f.bz + w2 * f.cz;
+  }
+  function update2(st, time) {
+    const tau = st.tau, G = st.G;
+    const rot = 0.22 * Math.sin(time * 0.3), cR = Math.cos(rot), sR = Math.sin(rot);
+    const act = infl > 0.01 || rip.length > 0;
+    const put = (i, x, y, z) => { const o = i * 3; pos[o] = x * cR + z * sR; pos[o + 1] = y; pos[o + 2] = -x * sR + z * cR; if (act) pushPoint(o); };
+    for (const f of FLW) {
+      const gIn = sm((tau - f.dG) / 2.6), g = gIn * G; f.g = g;
+      // this flower's stem end and head spot this frame: its own, or its heart spot
+      const hbF = sm((heartB - f.hd) / 0.7);
+      f.cx = lerp(f.x, f.hx, hbF); f.cy = lerp(f.y, f.hy, hbF); f.cz = lerp(f.z, f.hz, hbF);
+      f.cp1x = lerp(f.p1x, (f.bx + f.cx) * 0.35, hbF); f.cp1y = lerp(f.p1y, f.cy * 0.5, hbF); f.cp1z = lerp(f.p1z, (f.bz + f.cz) * 0.35, hbF);
+      // stem
+      for (let i = 0; i < STEM_PER; i++) {
+        Bz(f, f.stT[i] * g);
+        put(f.stStart + i, bx_ + f.stJ[i * 3], by_ + f.stJ[i * 3 + 1], bz_ + f.stJ[i * 3 + 2]);
+      }
+      // head position and stem direction at the tip
+      const gc = Math.max(0.02, Math.min(1, g));
+      Bz(f, gc); const hx = bx_, hy = by_, hz = bz_;
+      const a = 1 - gc;
+      let tx = 2 * a * (f.cp1x - f.bx) + 2 * gc * (f.cx - f.cp1x), ty = 2 * a * f.cp1y + 2 * gc * (f.cy - f.cp1y), tz = 2 * a * (f.cp1z - f.bz) + 2 * gc * (f.cz - f.cp1z);
+      const tl = Math.hypot(tx, ty, tz) || 1; tx /= tl; ty /= tl; tz /= tl;
+      const bloomT = sm((tau - f.dB) / 2.0);
+      const b = bloomT * f.bmax * sm(G * 1.5);
+      const hs = sm((gIn - 0.55) * 2.2) * (f.bud ? 1 : (0.3 + 0.7 * sm(bloomT * 1.5))) * Math.pow(G, 0.8) * (1 - 0.45 * hbF);
+      const w = sm(b * 1.6);
+      const nfx = lerp(f.nf[0], 0, hbF), nfy = lerp(f.nf[1], 0, hbF), nfz = lerp(f.nf[2], 1, hbF);
+      let nx = lerp(tx, nfx, w), ny = lerp(ty, nfy, w), nz = lerp(tz, nfz, w);
+      let touchW = 0;
+      if (act) {
+        const hxr = hx * cR + hz * sR;
+        let dxh = hxr - px, dyh = hy - py, dh = Math.hypot(dxh, dyh) + 1e-5;
+        let w1 = infl * (1 - heartB) * Math.pow(Math.max(0, 1 - dh / 0.45), 2);
+        nx += dxh / dh * 0.55 * w1; ny += dyh / dh * 0.55 * w1; touchW = w1;
+        for (const r of rip) {
+          const age = nowT - r.t; dxh = hxr - r.x; dyh = hy - r.y; dh = Math.hypot(dxh, dyh) + 1e-5;
+          const e = (dh - age * 1.5) / 0.22, w2 = 0.9 * Math.exp(-age * 1.4) * Math.exp(-e * e);
+          nx += dxh / dh * 0.6 * w2; ny += dyh / dh * 0.6 * w2; touchW += w2;
+        }
+      }
+      const nl = Math.hypot(nx, ny, nz) || 1; nx /= nl; ny /= nl; nz /= nl;
+      // basis perpendicular to n
+      let e1x = R0[1] * nz - R0[2] * ny, e1y = R0[2] * nx - R0[0] * nz, e1z = R0[0] * ny - R0[1] * nx;
+      const el = Math.hypot(e1x, e1y, e1z) || 1; e1x /= el; e1y /= el; e1z /= el;
+      const e2x = ny * e1z - nz * e1y, e2y = nz * e1x - nx * e1z, e2z = nx * e1y - ny * e1x;
+      const spin = f.rotOff + 0.18 * Math.sin(time * 0.7 + f.ph) + touchW * 0.25 * Math.sin(time * 12 + f.ph);
+      const tn = f.tn;
+      for (let k = 0; k < 6; k++) {
+        const inner = k & 1, th = spin + k * Math.PI / 3, ct = Math.cos(th), sn = Math.sin(th);
+        const rx = ct * e1x + sn * e2x, ry = ct * e1y + sn * e2y, rz = ct * e1z + sn * e2z;
+        const lx = -sn * e1x + ct * e2x, ly = -sn * e1y + ct * e2y, lz = -sn * e1z + ct * e2z;
+        const phi0 = lerp(0.10 + 0.02 * k, inner ? 1.0 : 1.25, b), c = lerp(0.12, inner ? 0.7 : 0.9, b);
+        const L = f.R * hs * (inner ? 0.93 : 1), wsc = (inner ? 0.30 : 0.23) * (0.5 + 0.5 * b);
+        const sinP0 = Math.sin(phi0), cosP0 = Math.cos(phi0), rho = 0.018 * hs;
+        const base = f.tStart + k * tn, pb = f.pStart + k * tn;
+        for (let i = 0; i < tn; i++) {
+          const u = tU[base + i], v = tV[base + i], wu = tW[base + i];
+          const ang = phi0 + c * u;
+          const fu = (Math.sin(ang) - sinP0) / c, gr = (cosP0 - Math.cos(ang)) / c;
+          const lat = v * wu * wsc, cup = v * v * wu * wsc * 0.5;
+          const up = fu + cup * 0.25, rad = gr - cup * 0.6 + rho / Math.max(L, 0.001);
+          put(pb + i, hx + L * (up * nx + rad * rx + lat * lx), hy + L * (up * ny + rad * ry + lat * ly), hz + L * (up * nz + rad * rz + lat * lz));
+        }
+      }
+      // stamens and pistil
+      const Ls = 0.8 * f.R * hs * sm((b - 0.2) * 2.5), bb = 0.3 + 0.7 * b;
+      for (let k = 0; k < 7; k++) {
+        const th = k === 6 ? 0 : spin + 0.5 + k * Math.PI / 3, ct = Math.cos(th), sn = Math.sin(th);
+        const rx = ct * e1x + sn * e2x, ry = ct * e1y + sn * e2y, rz = ct * e1z + sn * e2z;
+        const upk = k === 6 ? 1.1 : 0.85, radk = k === 6 ? 0.12 : 0.42;
+        for (let i = 0; i < STAM_N; i++) {
+          const u = sU[i], up = u * upk, rad = radk * u * u * bb;
+          put(f.sStart + k * STAM_N + i, hx + Ls * (up * nx + rad * rx), hy + Ls * (up * ny + rad * ry), hz + Ls * (up * nz + rad * rz));
+        }
+      }
+    }
+    // leaves
+    for (let q = 0; q < LV.length; q++) {
+      const l = LV[q], fl = FLW[l.si], gl = sm((tau - l.d) / 2.2) * Math.sqrt(G);
+      Bz(fl, l.t0 * fl.g);
+      const bx = bx_, by = by_, bz = bz_, hxL = Math.cos(l.a), hzL = Math.sin(l.a), lx = -hzL, lz = hxL;
+      const eps = l.eps + 0.05 * Math.sin(time * 0.9 + q), c = -0.9, L = l.L * gl;
+      const sinE = Math.sin(eps), cosE = Math.cos(eps);
+      for (let i = 0; i < LEAF_PER; i++) {
+        const j = q * LEAF_PER + i, u = bLu[j], v = bLv[j], wu = bLw[j];
+        const ang = eps + c * u;
+        const fx = (Math.sin(ang) - sinE) / c, gy = (cosE - Math.cos(ang)) / c;
+        const lat = v * wu * 0.13 * L, fold = Math.abs(v) * wu * 0.13 * L * 0.3;
+        put(l.start + i, bx + L * fx * hxL + lat * lx, Math.max(0.01, by + L * gy + fold), bz + L * fx * hzL + lat * lz);
+      }
+    }
+    put(halo2, 0, 0.85, -0.3);
+  }
+
+  // ---------- frame loop ----------
+  const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const t0 = performance.now();
+  function frame() {
+    const time = typeof window.__T === 'number' ? window.__T : (reduce ? 4 : (performance.now() - t0) / 1000 + 0.3);
+    const T = time;
+    nowT = time;
+    infl += (target - infl) * 0.14; px += (tx - px) * 0.3; py += (ty - py) * 0.3;
+    heartB += ((down ? 1 : 0) - heartB) * 0.05;
+    while (rip.length && time - rip[0].t > 3) rip.shift();
+    const st = story(T, reduce ? 20 : time);
+    if (st.A > 0.002 || st.sphereA > 0.002) update1(st, reduce ? 20 : time);
+    if (st.A2 > 0.002) update2(st, reduce ? 20 : time);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindBuffer(gl.ARRAY_BUFFER, posBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, pos);
+    gl.uniformMatrix4fv(uMVP, false, mvp);
+    gl.uniform1f(uScale, H / (2 * TF)); gl.uniform1f(uTime, time); gl.uniform1f(uDpr, dpr); gl.uniform1f(uLife, st.life);
+    gl.uniform4f(uGA, st.soilA, st.A, st.sphereA, st.A2);
+    gl.uniform1f(uGS, st.tau >= 0 ? sm(st.tau / 1.5) * st.A2 : 0);
+    gl.drawArrays(gl.POINTS, 0, N);
+    if (!reduce || typeof window.__T !== 'number') requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
